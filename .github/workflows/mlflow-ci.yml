@@ -115,7 +115,7 @@ jobs:
         # Build Docker image dari model MLflow
         mlflow models build-docker \
           -m "runs:/${{ steps.get-run-id.outputs.run_id }}/model" \
-          -n "mlflow-diabetes-${{ github.sha:0:8 }}" \
+          -n "mlflow-diabetes-${{ github.sha }}" \
           --enable-mlserver
         
         echo "✅ Docker image built successfully"
@@ -134,9 +134,9 @@ jobs:
       run: |
         echo "🏷️ Tagging Docker image..."
         
-        docker tag "mlflow-diabetes-${{ github.sha:0:8 }}" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha:0:8 }}"
-        docker tag "mlflow-diabetes-${{ github.sha:0:8 }}" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
-        docker tag "mlflow-diabetes-${{ github.sha:0:8 }}" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:run-${{ github.run_number }}"
+        docker tag "mlflow-diabetes-${{ github.sha }}" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
+        docker tag "mlflow-diabetes-${{ github.sha }}" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
+        docker tag "mlflow-diabetes-${{ github.sha }}" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:run-${{ github.run_number }}"
         
         echo "✅ Docker images tagged"
         
@@ -146,7 +146,7 @@ jobs:
       run: |
         echo "⬆️ Pushing Docker images to Docker Hub..."
         
-        docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha:0:8 }}"
+        docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
         docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
         docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:run-${{ github.run_number }}"
         
@@ -186,6 +186,6 @@ jobs:
         echo ""
         echo "🐳 Docker Images:"
         echo "  - ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
-        echo "  - ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha:0:8 }}"
+        echo "  - ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
         echo ""
         echo "🎉 All steps completed according to Advanced criteria (4 pts)"
