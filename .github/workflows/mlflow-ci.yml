@@ -45,6 +45,20 @@ jobs:
           pandas \
           numpy \
           pip
+
+    - name: Clean MLflow database
+      shell: bash -l {0}
+      run: |
+        echo "🧹 Membersihkan database MLflow yang rusak..."
+        
+        # Hapus file database MLflow yang ada
+        rm -f mlflow.db 2>/dev/null || true
+        rm -rf mlruns 2>/dev/null || true
+        
+        # Inisialisasi database baru
+        mlflow db upgrade sqlite:///mlflow.db
+        
+        echo "✅ Database telah dibersihkan"
         
     # 6. Run MLflow project WITH conda
     - name: Run MLflow project
@@ -55,6 +69,9 @@ jobs:
         cd MLProject
         
         rm -rf mlruns run_id.txt 2>/dev/null || true
+
+        export MLFLOW_TRACKING_URI="sqlite:///mlflow.db"
+
         
         mlflow run . \
           --experiment-name "github-ci-advanced" \
