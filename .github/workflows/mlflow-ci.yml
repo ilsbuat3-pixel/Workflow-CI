@@ -46,6 +46,7 @@ jobs:
         rm -rf mlruns run_id.txt 2>/dev/null || true
         
         mlflow run . \
+          --env-manager local \
           --experiment-name "github-ci-advanced" \
           -P data_path=data/diabetes_preprocessed_full.csv \
           -P test_size=0.2 \
