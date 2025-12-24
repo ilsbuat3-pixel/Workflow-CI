@@ -46,7 +46,6 @@ jobs:
         rm -rf mlruns run_id.txt 2>/dev/null || true
         
         mlflow run . \
-          --env-manager local \
           --experiment-name "github-ci-advanced" \
           -P data_path=data/diabetes_preprocessed_full.csv \
           -P test_size=0.2 \
@@ -102,7 +101,6 @@ jobs:
         mlflow models build-docker \
           -m "runs:/${{ steps.get-run-id.outputs.run_id }}/model" \
           -n "mlflow-diabetes"
-          --env-manager local
         
     # 11. Log in to Docker Hub
     - name: Log in to Docker Hub
