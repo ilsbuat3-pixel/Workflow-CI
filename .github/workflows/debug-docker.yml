@@ -1,130 +1,95 @@
-name: DEBUG Docker Push Only
+name: DEBUG Docker Login Only
 
 on: workflow_dispatch
 
 jobs:
-  debug-docker-push:
+  debug-login:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Install Docker minimal
-    - name: Install Docker Minimal
+    # 1. Pakai Docker yang sudah ada di runner (tidak perlu install)
+    - name: Check Docker Status
       run: |
-        sudo apt-get update
-        sudo apt-get install -y docker.io
-        sudo systemctl start docker
-        docker --version
+        echo "🔍 Checking Docker on runner..."
+        docker --version || echo "Docker not installed"
+        docker system info | head -5 || echo "Cannot get docker info"
     
-    # 2. LOGIN TEST dengan berbagai cara
-    - name: Test Docker Hub Login Methods
+    # 2. TEST LOGIN SAJA (tanpa push)
+    - name: Test Docker Hub Login
       run: |
-        echo "🔐 ===== TESTING DOCKER LOGIN METHODS ====="
+        echo "🔐 ===== TEST DOCKER HUB LOGIN ====="
         
-        # Method 1: Manual login dengan token
+        # Cek secret ada
+        echo "Username from secret: ${{ secrets.DOCKER_USERNAME }}"
+        echo "Password length: ${#DOCKER_PASSWORD}"
+        
+        # Test login
         echo ""
-        echo "Method 1: Manual login with token..."
-        if echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "inirianokw" --password-stdin; then
-          echo "✅ Method 1 SUCCESS"
-        else
-          echo "❌ Method 1 FAILED"
-        fi
+        echo "Attempting login..."
+        LOGIN_RESULT=$(echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin 2>&1)
         
-        # Method 2: Login action
-        echo ""
-        echo "Method 2: Login action (current method)..."
-        # Simulasikan login action
-        echo "${{ secrets.DOCKER_PASSWORD }}" > /tmp/token.txt
-        if docker login -u "inirianokw" --password-stdin < /tmp/token.txt; then
-          echo "✅ Method 2 SUCCESS"
-        else
-          echo "❌ Method 2 FAILED"
-        fi
-        
-        # Method 3: Login with registry
-        echo ""
-        echo "Method 3: Login with registry URL..."
-        if echo "${{ secrets.DOCKER_PASSWORD }}" | docker login docker.io -u "inirianokw" --password-stdin; then
-          echo "✅ Method 3 SUCCESS"
-        else
-          echo "❌ Method 3 FAILED"
-        fi
-        
-        # Verify login
-        echo ""
-        echo "🔍 Login verification:"
-        docker system info | grep -i "username" || echo "No username in system info"
-    
-    # 3. TEST PUSH dengan image SIMPLE
-    - name: Test Push Simple Image
-      run: |
-        echo "🧪 ===== TEST PUSH SIMPLE IMAGE ====="
-        
-        # Pull image kecil
-        docker pull alpine:latest
-        
-        # Test 1: Push ke repository RANDOM (auto-create)
-        RANDOM_NAME="test-$(date +%s)"
-        echo ""
-        echo "Test 1: Push to NEW repository: inirianokw/$RANDOM_NAME"
-        docker tag alpine:latest "inirianokw/$RANDOM_NAME:latest"
-        
-        if docker push "inirianokw/$RANDOM_NAME:latest" 2>&1 | tee /tmp/push1.log; then
-          echo "🎉 Test 1 SUCCESS!"
-          echo "Token BERFUNGSI! Repository baru bisa dibuat otomatis"
+        if echo "$LOGIN_RESULT" | grep -q "Login Succeeded"; then
+          echo "✅ LOGIN SUCCESSFUL!"
+          echo "$LOGIN_RESULT"
           
-          # Test 2: Sekarang coba mlflow-diabetes
+          # Cek user info
           echo ""
-          echo "Test 2: Now trying mlflow-diabetes..."
-          docker tag alpine:latest "inirianokw/mlflow-diabetes:test-$(date +%s)"
-          
-          if docker push "inirianokw/mlflow-diabetes:test-$(date +%s)"; then
-            echo "🎉 Test 2 SUCCESS! mlflow-diabetes works NOW"
-            echo ""
-            echo "🚨 KESIMPULAN: Repository mlflow-diabetes sebelumnya CORRUPTED"
-            echo "Tapi sekarang FIXED setelah push pertama berhasil"
-          else
-            echo "❌ Test 2 FAILED - mlflow-diabetes MASIH bermasalah"
-            echo ""
-            echo "📋 ERROR DETAILS:"
-            docker push "inirianokw/mlflow-diabetes:test-$(date +%s)" 2>&1 | tail -20
-          fi
+          echo "🔍 User info from Docker:"
+          docker system info | grep -i "username\|name" || echo "No user info"
         else
-          echo "❌ Test 1 FAILED"
+          echo "❌ LOGIN FAILED!"
           echo ""
-          echo "🔴 MASALAH KRITIS:"
-          echo "Token TIDAK BERFUNGSI sama sekali"
+          echo "Error details:"
+          echo "$LOGIN_RESULT"
           echo ""
-          echo "📄 ERROR LOG:"
-          cat /tmp/push1.log
-          echo ""
-          echo "🚨 ACTION REQUIRED:"
-          echo "1. Buat Docker Hub account BARU"
-          echo "2. Atau hubungi Docker Hub support"
+          echo "🚨 Possible issues:"
+          echo "1. Token expired/revoked"
+          echo "2. Wrong username/password"
+          echo "3. Docker Hub account issues"
         fi
+      env:
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     
-    # 4. Check Repository Status via API
-    - name: Check Repository Status
+    # 3. TEST dengan curl ke Docker Hub API
+    - name: Test Docker Hub API
       run: |
-        echo "🔍 ===== CHECK REPOSITORY VIA API ====="
+        echo "🌐 ===== TEST DOCKER HUB API ====="
         
-        # Cek repository mlflow-diabetes
-        echo "Checking: inirianokw/mlflow-diabetes"
+        # Test 1: Public API endpoint
+        echo "Testing Docker Hub public API..."
+        curl -s "https://hub.docker.com/v2/" | head -5
         
-        # Try Docker Hub API v2
+        # Test 2: Check your repository
+        echo ""
+        echo "Checking repository: inirianokw/mlflow-diabetes"
         RESPONSE=$(curl -s "https://hub.docker.com/v2/repositories/inirianokw/mlflow-diabetes/")
         
-        echo "API Response:"
-        echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
-        
-        # Cek jika repository private
-        if echo "$RESPONSE" | grep -q '"is_private":true'; then
-          echo "⚠️  Repository is PRIVATE"
-          echo "Private repos butuh token dengan specific permissions"
+        if echo "$RESPONSE" | grep -q "not found"; then
+          echo "❌ Repository NOT FOUND"
+        elif echo "$RESPONSE" | grep -q '"name":"mlflow-diabetes"'; then
+          echo "✅ Repository EXISTS"
+          echo "   Visibility: $(echo "$RESPONSE" | grep -o '"is_private":[^,]*' | cut -d: -f2)"
+          echo "   Status: $(echo "$RESPONSE" | grep -o '"status":[^,]*' | cut -d: -f2 | tr -d '"')"
         else
-          echo "✅ Repository is PUBLIC"
+          echo "⚠️  Unknown response"
+          echo "$RESPONSE" | head -10
+        fi
+    
+    # 4. Test dengan Docker CLI yang sudah ada
+    - name: Quick Docker Test
+      run: |
+        echo "🐳 ===== QUICK DOCKER TEST ====="
+        
+        # Cek jika Docker tersedia
+        if ! command -v docker &> /dev/null; then
+          echo "Docker not available on runner"
+          echo "Skipping Docker tests"
+          exit 0
         fi
         
-        # Cek user permissions
-        if echo "$RESPONSE" | grep -q '"user":'; then
-          echo "✅ Repository belongs to user"
-        fi
+        # Test simple Docker command
+        echo "Testing Docker pull..."
+        docker pull hello-world 2>&1 | head -5 || echo "Cannot pull"
+        
+        echo ""
+        echo "Test completed"
