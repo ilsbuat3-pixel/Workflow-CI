@@ -123,19 +123,27 @@ def main():
         model_path = 'best_model.pkl'
         with open(model_path, 'wb') as f:
             pickle.dump(best_model, f)
-        mlflow.log_artifact(model_path, artifact_path="model")
         
         # Juga log dengan sklearn untuk compatibility
-        mlflow.sklearn.log_model(best_model, "sklearn_model")
+        mlflow.sklearn.log_model(
+            best_model, 
+            "model",  # ← NAMA FOLDER HARUS "model"
+            registered_model_name="diabetes_classifier"
+        )
+        
+        import joblib
+
+        joblib.dump(best_model, "best_model.joblib")
+
         
         # 10. Save run_id untuk Docker build
         run_id = mlflow.active_run().info.run_id
-        print(f"\n🏷️  Run ID: {run_id}")
-        
-        # Save run_id to file
+        print(f"\n🏷️ Run ID: {run_id}")
+        print(f"📦 Model saved as: runs:/{run_id}/model")
+
         with open('run_id.txt', 'w') as f:
             f.write(run_id)
-        
+
         print("\n" + "="*70)
         print("✅ TRAINING COMPLETED SUCCESSFULLY")
         print("="*70)
