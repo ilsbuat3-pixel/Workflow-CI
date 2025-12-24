@@ -1,180 +1,55 @@
-name: MLflow CI/CD Pipeline - Fixed Docker Install
+name: MLflow CI Pipeline - For Your Setup
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  mlflow-pipeline:
+  train-model:
     runs-on: ubuntu-latest
-    
+
     steps:
-    # 1. Checkout
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 2. Navigate to MLProject
-    - name: Navigate to MLProject
-      run: |
-        echo "📁 Entering MLProject folder..."
-        cd MLProject
-        echo "Current dir: $(pwd)"
-        ls -la
-
-    # 3. Setup Python
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.12.7'
+        python-version: '3.10'
 
-    # 4. Install Python dependencies
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
-        cd MLProject
-        pip install --upgrade pip
-        pip install mlflow scikit-learn pandas numpy
-        pip install matplotlib seaborn joblib
-        pip install mlflow[extras]
+        pip install mlflow scikit-learn pandas numpy matplotlib seaborn
+        pip install mlflow[extras]  # Untuk build-docker
 
-    # 5. Clean environment
+    # 🔴 TAMBAH: Clean environment dulu
     - name: Clean MLflow environment
       run: |
-        cd MLProject
-        echo "🧹 Cleaning MLflow files..."
-        rm -rf mlruns run_id.txt mlflow.db .mlflow 2>/dev/null || true
+        rm -rf mlruns mlflow.db .mlflow 2>/dev/null || true
 
-    # 6. Run MLflow project
-    - name: Run MLflow project
-      id: run-mlflow
+    - name: Run MLflow Project
+      id: mlflow-run
       run: |
         cd MLProject
         
-        echo "🚀 Running MLflow project..."
+        # Hapus run sebelumnya
+        rm -rf mlruns run_id.txt 2>/dev/null || true
         
+        # Run dengan parameter yang Anda punya
         mlflow run . \
-          --experiment-name "mlflow-ci-pipeline" \
+          --env-manager=local \
           -P data_path=data/diabetes_preprocessed_full.csv \
           -P test_size=0.2 \
-          -P random_state=42 \
-          --env-manager=local
+          -P random_state=42
         
-        # Get run ID
-        if [ -f "run_id.txt" ]; then
-          RUN_ID=$(cat run_id.txt)
-          echo "✅ Run ID: $RUN_ID"
-        else
-          RUN_ID=$(find . -name "meta.yaml" -type f | head -1 | xargs grep "run_id:" | awk '{print $2}')
-          echo "✅ Run ID: $RUN_ID"
-        fi
-        
+        # Simpan run ID dengan cara yang lebih reliable
+        RUN_ID=$(find mlruns -name "meta.yaml" -type f | head -1 | xargs grep "run_id:" | awk '{print $2}')
         echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
         echo "$RUN_ID" > run_id.txt
+        echo "✅ Run ID: $RUN_ID"
 
-    # 7. Verify model
-    - name: Verify Model Artifacts
-      run: |
-        cd MLProject
-        
-        if [ -f "run_id.txt" ]; then
-          RUN_ID=$(cat run_id.txt)
-          echo "🔍 Model verification for Run ID: $RUN_ID"
-          
-          # Simple check - just see if mlruns exists
-          if [ -d "mlruns" ]; then
-            echo "✅ mlruns directory exists"
-            echo "📁 Structure:"
-            find mlruns -type f -name "*.pkl" -o -name "*.joblib" -o -name "MLmodel" | head -10
-          else
-            echo "❌ mlruns not found"
-            exit 1
-          fi
-        else
-          echo "❌ run_id.txt not found"
-          exit 1
-        fi
-
-    # 🔥 PERBAIKAN UTAMA: Install Docker dengan cara yang benar
-    - name: Install Docker (Fixed)
-      run: |
-        echo "🐳 Installing Docker without conflicts..."
-        
-        # Hapus docker yang mungkin sudah ada
-        sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-        
-        # Update package lists
-        sudo apt-get update
-        
-        # Install dependencies
-        sudo apt-get install -y \
-            apt-transport-https \
-            ca-certificates \
-            curl \
-            gnupg \
-            lsb-release
-        
-        # Add Docker's official GPG key
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-        
-        # Set up stable repository
-        echo \
-          "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
-          $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        
-        # Install Docker Engine
-        sudo apt-get update
-        sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-        
-        # Verify installation
-        sudo docker --version
-        echo "✅ Docker installed successfully"
-
-    # 8. Build Docker image
-    - name: Build Docker image with MLflow
-      run: |
-        cd MLProject
-        
-        if [ -f "run_id.txt" ]; then
-          RUN_ID=$(cat run_id.txt)
-          echo "🐳 Building Docker for Run ID: $RUN_ID"
-          
-          # Build dengan MLflow
-          mlflow models build-docker \
-            -m "runs:/$RUN_ID/model" \
-            -n "mlflow-diabetes-model" \
-            --enable-mlserver
-            
-          echo "✅ Docker image built"
-        else
-          echo "❌ run_id.txt not found"
-          exit 1
-        fi
-
-    # 9. Login Docker Hub
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_TOKEN }}
-
-    # 10. Tag & Push Docker
-    - name: Tag and Push Docker image
-      run: |
-        echo "🏷️ Tagging Docker image..."
-        
-        # Tambahkan sudo karena baru install
-        sudo docker tag "mlflow-diabetes-model" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
-        sudo docker tag "mlflow-diabetes-model" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
-        
-        echo "📤 Pushing to Docker Hub..."
-        sudo docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
-        sudo docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
-        
-        echo "🎉 Successfully pushed to Docker Hub!"
-        echo "📦 Image: ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes"
-        echo "🏷️ Tags: latest, ${{ github.sha }}"
-
-    # 11. Upload artifacts (optional)
     - name: Upload MLflow artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -182,8 +57,53 @@ jobs:
         path: MLProject/mlruns
         retention-days: 30
 
-    # 12. Complete
+    # 🔴 PERBAIKI: Cara ambil RUN_ID
+    - name: Build Docker image with MLflow
+      id: build-docker
+      run: |
+        cd MLProject
+        
+        if [ -f "run_id.txt" ]; then
+          RUN_ID=$(cat run_id.txt)
+          echo "Building Docker for Run ID: $RUN_ID"
+        else
+          # Fallback ke cara lama
+          RUN_ID=$(ls mlruns/0 2>/dev/null | head -n 1)
+          echo "Using first directory: $RUN_ID"
+        fi
+        
+        # 🔴 SESUAIKAN: Nama image pakai username Anda
+        mlflow models build-docker \
+          -m "runs:/$RUN_ID/model" \
+          -n "inirianokw/mlflow-diabetes"
+
+    # 🔴 PERBAIKI: Install Docker dulu
+    - name: Install Docker
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y docker.io
+        sudo systemctl start docker
+
+    # 🔴 SESUAIKAN: Login dengan username dan PASSWORD (bukan TOKEN)
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}  # Harus: inirianokw
+        password: ${{ secrets.DOCKER_PASSWORD }}  # Token: dckr_pat_...
+
+    # 🔴 SESUAIKAN: Push dengan username Anda
+    - name: Push Docker image to Docker Hub
+      run: |
+        # 🔴 GANTI: putriiantarii → inirianokw
+        docker push "inirianokw/mlflow-diabetes:latest"
+        docker push "inirianokw/mlflow-diabetes:${{ github.sha }}"
+        
+        echo "🎉 Docker images pushed!"
+        echo "Image: inirianokw/mlflow-diabetes"
+        echo "Tags: latest, ${{ github.sha }}"
+
     - name: Complete pipeline
       run: |
-        echo "✅ MLflow CI/CD Pipeline COMPLETED!"
-        echo "📊 Model trained and Docker image pushed"
+        echo "✅ MLflow CI Pipeline Completed!"
+        echo "📊 Model trained and Docker image built"
+        echo "🐳 Docker Hub: inirianokw/mlflow-diabetes"
