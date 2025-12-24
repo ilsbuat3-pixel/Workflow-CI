@@ -1,4 +1,4 @@
-name: MLflow CI/CD Advanced (4 pts)
+name: MLflow CI/CD Advanced Fixed
 
 on:
   push:
@@ -10,15 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Set up job
-    - name: Set up job
-      run: echo "🚀 Starting MLflow CI/CD Advanced Pipeline..."
-      
-    # 2. Run actions checkout v4
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    # 3. Setup Miniconda
+    # 1. Setup Miniconda
     - name: Setup Miniconda
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -27,15 +19,7 @@ jobs:
         activate-environment: mlflow-env
         auto-activate-base: false
         
-    # 4. Check Env
-    - name: Check Environment
-      shell: bash -l {0}
-      run: |
-        echo "Python: $(python --version)"
-        echo "Conda: $(conda --version)"
-        echo "Starting MLflow CI/CD..."
-        
-    # 5. Install dependencies via conda
+    # 2. Install dependencies
     - name: Install dependencies
       shell: bash -l {0}
       run: |
@@ -45,22 +29,32 @@ jobs:
           pandas \
           numpy \
           pip
-
-    - name: Clean MLflow database
+        
+    # 3. 🔴 PERBAIKAN: Inisialisasi Database dengan Benar
+    - name: Initialize MLflow Database
       shell: bash -l {0}
       run: |
-        echo "🧹 Membersihkan database MLflow yang rusak..."
+        echo "🔧 Menginisialisasi database MLflow dari nol..."
         
-        # Hapus file database MLflow yang ada
-        rm -f mlflow.db 2>/dev/null || true
-        rm -rf mlruns 2>/dev/null || true
+        # Hapus SEMUA file database dan tracking
+        rm -rf mlflow.db mlruns .mlflow 2>/dev/null || true
         
-        # Inisialisasi database baru
-        mlflow db upgrade sqlite:///mlflow.db
+        # Buat database baru dengan skema lengkap
+        mlflow db init sqlite:///mlflow.db
         
-        echo "✅ Database telah dibersihkan"
+        # Verifikasi database dibuat
+        if [ -f "mlflow.db" ]; then
+          echo "✅ Database berhasil dibuat: $(ls -lh mlflow.db)"
+          
+          # Tes koneksi database
+          echo "Mengecek tabel database..."
+          sqlite3 mlflow.db ".tables" || echo "Database kosong, akan dibuat saat run pertama"
+        else
+          echo "❌ Database gagal dibuat"
+          exit 1
+        fi
         
-    # 6. Run MLflow project WITH conda
+    # 4. Run MLflow project dengan tracking URI eksplisit
     - name: Run MLflow project
       id: mlflow-run
       shell: bash -l {0}
@@ -68,51 +62,62 @@ jobs:
         echo "📊 Running MLflow project..."
         cd MLProject
         
-        rm -rf mlruns run_id.txt 2>/dev/null || true
-
+        # Set environment variable untuk MLflow
         export MLFLOW_TRACKING_URI="sqlite:///mlflow.db"
-
+        export MLFLOW_EXPERIMENT_NAME="github-ci-advanced"
         
+        # Hapus run sebelumnya
+        rm -rf mlruns run_id.txt 2>/dev/null || true
+        
+        echo "MLFLOW_TRACKING_URI: $MLFLOW_TRACKING_URI"
+        
+        # Jalankan dengan --no-conda untuk menghindari konflik environment
         mlflow run . \
-          --experiment-name "github-ci-advanced" \
+          --experiment-name "$MLFLOW_EXPERIMENT_NAME" \
           -P data_path=data/diabetes_preprocessed_full.csv \
           -P test_size=0.2 \
-          -P random_state=42
+          -P random_state=42 \
+          --no-conda  # 🔴 Penting: Gunakan environment yang sudah aktif
         
-        # Store run ID
-        RUN_ID=$(find mlruns -name "meta.yaml" | xargs grep -h "run_id:" | awk '{print $2}' | head -1)
+        # Simpan run ID
+        RUN_ID=$(sqlite3 mlflow.db "SELECT run_uuid FROM runs ORDER BY start_time DESC LIMIT 1;" 2>/dev/null || \
+                 find . -name "meta.yaml" -type f | xargs grep "run_id:" | head -1 | awk '{print $2}')
+        
+        if [ -z "$RUN_ID" ]; then
+          # Fallback: cari di directory mlruns
+          RUN_ID=$(find mlruns -name "meta.yaml" -type f | head -1 | xargs grep "run_id:" | awk '{print $2}')
+        fi
+        
         echo "$RUN_ID" > run_id.txt
         echo "Run ID: $RUN_ID"
+        echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
         
-    # 7. Get latest MLflow run id
-    - name: Get latest MLflow run id
-      id: get-run-id
+    # 5. Verifikasi Run
+    - name: Verify MLflow Run
       shell: bash -l {0}
       run: |
         cd MLProject
-        RUN_ID=$(cat run_id.txt)
-        echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-        echo "Run ID: $RUN_ID"
         
-    # 8. Install additional dependencies for Docker
-    - name: Install Python dependencies for Docker
-      shell: bash -l {0}
-      run: |
-        conda install -c conda-forge -y \
-          docker-py \
-          mlflow-skinny
+        if [ -f "run_id.txt" ]; then
+          RUN_ID=$(cat run_id.txt)
+          echo "✅ Run ditemukan: $RUN_ID"
+          
+          # Cek apakah model artifacts ada
+          if [ -d "mlruns/0/$RUN_ID/artifacts/model" ]; then
+            echo "✅ Model artifacts ditemukan"
+            ls -la mlruns/0/$RUN_ID/artifacts/model/
+          else
+            echo "⚠️  Model artifacts tidak ditemukan, mencari alternative..."
+            find mlruns -name "model" -type d
+          fi
+        else
+          echo "❌ Run ID tidak ditemukan"
+          exit 1
+        fi
         
-    # 9. Upload to GitHub
-    - name: Upload to GitHub
-      uses: actions/upload-artifact@v4
-      with:
-        name: mlflow-artifacts
-        path: MLProject/mlruns/
-        retention-days: 30
-        
-    # 10. Build Docker Model dengan mlflow build-docker
+    # 6. Build Docker Model
     - name: Build Docker Model
-      if: success() && steps.get-run-id.outputs.run_id != ''
+      if: success()
       shell: bash -l {0}
       run: |
         echo "🐳 Building Docker image..."
@@ -121,31 +126,20 @@ jobs:
         RUN_ID=$(cat run_id.txt)
         echo "Using Run ID: $RUN_ID"
         
-        # Verify model exists
-        echo "Checking model artifacts..."
-        if [ -d "mlruns/0/$RUN_ID/artifacts/model" ]; then
-          echo "✅ Model artifacts found"
-          ls -la mlruns/0/$RUN_ID/artifacts/model/
-        else
-          echo "❌ Model artifacts not found in default path, searching..."
-          find mlruns -name "model" -type d
-        fi
-        
-        # Build Docker image
+        # Gunakan file-based tracking untuk Docker build
         mlflow models build-docker \
           -m "runs:/$RUN_ID/model" \
           -n "mlflow-diabetes" \
           --enable-mlserver
         
-    # 11. Install Docker for image management
+    # 7. Install Docker
     - name: Install Docker CLI
       run: |
         sudo apt-get update
         sudo apt-get install -y docker.io
         sudo systemctl start docker
-        sudo systemctl enable docker
         
-    # 12. Log in to Docker Hub
+    # 8. Login Docker Hub
     - name: Log in to Docker Hub
       if: success()
       uses: docker/login-action@v3
@@ -153,25 +147,16 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
         
-    # 13. Tag Docker Image
-    - name: Tag Docker Image
+    # 9. Tag & Push Docker
+    - name: Tag and Push Docker Image
       if: success()
       run: |
         sudo docker tag "mlflow-diabetes" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
         sudo docker tag "mlflow-diabetes" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
-        
-    # 14. Push Docker Image
-    - name: Push Docker Image
-      if: success()
-      run: |
         sudo docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
         sudo docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
         
-        echo "🎉 Docker images pushed to Docker Hub!"
-        
-    # 15. Complete job
+    # 10. Complete
     - name: Complete job
-      shell: bash -l {0}
       run: |
-        echo "✅ MLflow CI/CD Advanced Pipeline Completed!"
-        echo "Docker Hub: ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes"
+        echo "✅ MLflow CI/CD Pipeline Selesai!"
