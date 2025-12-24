@@ -1,109 +1,130 @@
-name: MLflow CI Pipeline - For Your Setup
+name: DEBUG Docker Push Only
 
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+on: workflow_dispatch
 
 jobs:
-  train-model:
+  debug-docker-push:
     runs-on: ubuntu-latest
-
+    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-
-    - name: Install dependencies
-      run: |
-        pip install mlflow scikit-learn pandas numpy matplotlib seaborn
-        pip install mlflow[extras]  # Untuk build-docker
-
-    # 🔴 TAMBAH: Clean environment dulu
-    - name: Clean MLflow environment
-      run: |
-        rm -rf mlruns mlflow.db .mlflow 2>/dev/null || true
-
-    - name: Run MLflow Project
-      id: mlflow-run
-      run: |
-        cd MLProject
-        
-        # Hapus run sebelumnya
-        rm -rf mlruns run_id.txt 2>/dev/null || true
-        
-        # Run dengan parameter yang Anda punya
-        mlflow run . \
-          --env-manager=local \
-          -P data_path=data/diabetes_preprocessed_full.csv \
-          -P test_size=0.2 \
-          -P random_state=42
-        
-        # Simpan run ID dengan cara yang lebih reliable
-        RUN_ID=$(find mlruns -name "meta.yaml" -type f | head -1 | xargs grep "run_id:" | awk '{print $2}')
-        echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-        echo "$RUN_ID" > run_id.txt
-        echo "✅ Run ID: $RUN_ID"
-
-    - name: Upload MLflow artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: mlflow-artifacts
-        path: MLProject/mlruns
-        retention-days: 30
-
-    # 🔴 PERBAIKI: Cara ambil RUN_ID
-    - name: Build Docker image with MLflow
-      id: build-docker
-      run: |
-        cd MLProject
-        
-        if [ -f "run_id.txt" ]; then
-          RUN_ID=$(cat run_id.txt)
-          echo "Building Docker for Run ID: $RUN_ID"
-        else
-          # Fallback ke cara lama
-          RUN_ID=$(ls mlruns/0 2>/dev/null | head -n 1)
-          echo "Using first directory: $RUN_ID"
-        fi
-        
-        # 🔴 SESUAIKAN: Nama image pakai username Anda
-        mlflow models build-docker \
-          -m "runs:/$RUN_ID/model" \
-          -n "inirianokw/mlflow-diabetes"
-
-    # 🔴 PERBAIKI: Install Docker dulu
-    - name: Install Docker
+    # 1. Install Docker minimal
+    - name: Install Docker Minimal
       run: |
         sudo apt-get update
         sudo apt-get install -y docker.io
         sudo systemctl start docker
-
-    # 🔴 SESUAIKAN: Login dengan username dan PASSWORD (bukan TOKEN)
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}  # Harus: inirianokw
-        password: ${{ secrets.DOCKER_PASSWORD }}  # Token: dckr_pat_...
-
-    # 🔴 SESUAIKAN: Push dengan username Anda
-    - name: Push Docker image to Docker Hub
+        docker --version
+    
+    # 2. LOGIN TEST dengan berbagai cara
+    - name: Test Docker Hub Login Methods
       run: |
-        # 🔴 GANTI: putriiantarii → inirianokw
-        docker push "inirianokw/mlflow-diabetes:latest"
-        docker push "inirianokw/mlflow-diabetes:${{ github.sha }}"
+        echo "🔐 ===== TESTING DOCKER LOGIN METHODS ====="
         
-        echo "🎉 Docker images pushed!"
-        echo "Image: inirianokw/mlflow-diabetes"
-        echo "Tags: latest, ${{ github.sha }}"
-
-    - name: Complete pipeline
+        # Method 1: Manual login dengan token
+        echo ""
+        echo "Method 1: Manual login with token..."
+        if echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "inirianokw" --password-stdin; then
+          echo "✅ Method 1 SUCCESS"
+        else
+          echo "❌ Method 1 FAILED"
+        fi
+        
+        # Method 2: Login action
+        echo ""
+        echo "Method 2: Login action (current method)..."
+        # Simulasikan login action
+        echo "${{ secrets.DOCKER_PASSWORD }}" > /tmp/token.txt
+        if docker login -u "inirianokw" --password-stdin < /tmp/token.txt; then
+          echo "✅ Method 2 SUCCESS"
+        else
+          echo "❌ Method 2 FAILED"
+        fi
+        
+        # Method 3: Login with registry
+        echo ""
+        echo "Method 3: Login with registry URL..."
+        if echo "${{ secrets.DOCKER_PASSWORD }}" | docker login docker.io -u "inirianokw" --password-stdin; then
+          echo "✅ Method 3 SUCCESS"
+        else
+          echo "❌ Method 3 FAILED"
+        fi
+        
+        # Verify login
+        echo ""
+        echo "🔍 Login verification:"
+        docker system info | grep -i "username" || echo "No username in system info"
+    
+    # 3. TEST PUSH dengan image SIMPLE
+    - name: Test Push Simple Image
       run: |
-        echo "✅ MLflow CI Pipeline Completed!"
-        echo "📊 Model trained and Docker image built"
-        echo "🐳 Docker Hub: inirianokw/mlflow-diabetes"
+        echo "🧪 ===== TEST PUSH SIMPLE IMAGE ====="
+        
+        # Pull image kecil
+        docker pull alpine:latest
+        
+        # Test 1: Push ke repository RANDOM (auto-create)
+        RANDOM_NAME="test-$(date +%s)"
+        echo ""
+        echo "Test 1: Push to NEW repository: inirianokw/$RANDOM_NAME"
+        docker tag alpine:latest "inirianokw/$RANDOM_NAME:latest"
+        
+        if docker push "inirianokw/$RANDOM_NAME:latest" 2>&1 | tee /tmp/push1.log; then
+          echo "🎉 Test 1 SUCCESS!"
+          echo "Token BERFUNGSI! Repository baru bisa dibuat otomatis"
+          
+          # Test 2: Sekarang coba mlflow-diabetes
+          echo ""
+          echo "Test 2: Now trying mlflow-diabetes..."
+          docker tag alpine:latest "inirianokw/mlflow-diabetes:test-$(date +%s)"
+          
+          if docker push "inirianokw/mlflow-diabetes:test-$(date +%s)"; then
+            echo "🎉 Test 2 SUCCESS! mlflow-diabetes works NOW"
+            echo ""
+            echo "🚨 KESIMPULAN: Repository mlflow-diabetes sebelumnya CORRUPTED"
+            echo "Tapi sekarang FIXED setelah push pertama berhasil"
+          else
+            echo "❌ Test 2 FAILED - mlflow-diabetes MASIH bermasalah"
+            echo ""
+            echo "📋 ERROR DETAILS:"
+            docker push "inirianokw/mlflow-diabetes:test-$(date +%s)" 2>&1 | tail -20
+          fi
+        else
+          echo "❌ Test 1 FAILED"
+          echo ""
+          echo "🔴 MASALAH KRITIS:"
+          echo "Token TIDAK BERFUNGSI sama sekali"
+          echo ""
+          echo "📄 ERROR LOG:"
+          cat /tmp/push1.log
+          echo ""
+          echo "🚨 ACTION REQUIRED:"
+          echo "1. Buat Docker Hub account BARU"
+          echo "2. Atau hubungi Docker Hub support"
+        fi
+    
+    # 4. Check Repository Status via API
+    - name: Check Repository Status
+      run: |
+        echo "🔍 ===== CHECK REPOSITORY VIA API ====="
+        
+        # Cek repository mlflow-diabetes
+        echo "Checking: inirianokw/mlflow-diabetes"
+        
+        # Try Docker Hub API v2
+        RESPONSE=$(curl -s "https://hub.docker.com/v2/repositories/inirianokw/mlflow-diabetes/")
+        
+        echo "API Response:"
+        echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
+        
+        # Cek jika repository private
+        if echo "$RESPONSE" | grep -q '"is_private":true'; then
+          echo "⚠️  Repository is PRIVATE"
+          echo "Private repos butuh token dengan specific permissions"
+        else
+          echo "✅ Repository is PUBLIC"
+        fi
+        
+        # Cek user permissions
+        if echo "$RESPONSE" | grep -q '"user":'; then
+          echo "✅ Repository belongs to user"
+        fi
