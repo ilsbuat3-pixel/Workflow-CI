@@ -1,181 +1,151 @@
-name: MLflow CI Pipeline - Compatible with Your Code
+name: MLflow CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  train-model:
+  mlflow-pipeline:
     runs-on: ubuntu-latest
-
+    
     steps:
-    # 1. Setup Python (pakai 3.10 seperti di conda.yaml Anda)
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+    # 1. Checkout code
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    # 2. Install semua dependencies yang ada di script Anda
+    # 2. MASUK KE MLProject SEBELUM APA PUN
+    - name: Navigate to MLProject
+      run: |
+        echo "📁 Navigating to MLProject folder..."
+        cd MLProject
+        echo "Current dir: $(pwd)"
+        ls -la
+
+    # 3. Setup Python
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'  # Sesuai conda.yaml Anda
+
+    # 4. Install dependencies
     - name: Install dependencies
       run: |
+        cd MLProject  # Pastikan di MLProject
         pip install --upgrade pip
         pip install mlflow scikit-learn pandas numpy
-        pip install matplotlib seaborn joblib  # Semua yang ada di script Anda
-        pip install mlflow[extras]  # Untuk build-docker
+        pip install matplotlib seaborn joblib
+        pip install mlflow[extras]
 
-    # 3. Clean environment untuk hindari konflik
+    # 5. Clean environment
     - name: Clean MLflow environment
       run: |
-        echo "🧹 Cleaning MLflow environment..."
-        rm -rf mlruns mlflow.db .mlflow MLProject/mlruns 2>/dev/null || true
+        cd MLProject
+        echo "🧹 Cleaning MLflow files..."
+        rm -rf mlruns run_id.txt mlflow.db .mlflow 2>/dev/null || true
 
-    # 4. Run MLflow Project - SESUAI dengan modelling.py Anda
-    - name: Run MLflow Project
+    # 6. Run MLflow project
+    - name: Run MLflow project
       id: run-mlflow
       run: |
         cd MLProject
         
-        echo "🚀 Running MLflow project with YOUR parameters..."
-        echo "Data path: data/diabetes_preprocessed_full.csv"
-        echo "Test size: 0.2"
-        echo "Random state: 42"
+        echo "🚀 Running MLflow project..."
+        echo "Files in MLProject:"
+        ls -la
         
-        # Run dengan parameter PERSIS seperti di script Anda
         mlflow run . \
-          --env-manager=local \
+          --experiment-name "mlflow-ci-pipeline" \
           -P data_path=data/diabetes_preprocessed_full.csv \
           -P test_size=0.2 \
-          -P random_state=42
+          -P random_state=42 \
+          --env-manager=local
         
-        echo "✅ MLflow run completed"
-        
-        # CARA YANG PASTI DAPAT RUN_ID: dari file yang dibuat modelling.py
+        # Ambil run ID
         if [ -f "run_id.txt" ]; then
           RUN_ID=$(cat run_id.txt)
-          echo "📝 Run ID from modelling.py: $RUN_ID"
+          echo "✅ Run ID from file: $RUN_ID"
         else
-          # Fallback jika file tidak dibuat
-          RUN_ID=$(find mlruns -name "meta.yaml" -type f | head -1 | xargs grep "run_id:" | awk '{print $2}')
-          echo "📝 Run ID from meta.yaml: $RUN_ID"
+          RUN_ID=$(find . -name "meta.yaml" -type f | head -1 | xargs grep "run_id:" | awk '{print $2}')
+          echo "✅ Run ID from meta.yaml: $RUN_ID"
         fi
         
-        # Simpan untuk step berikutnya
-        if [ -n "$RUN_ID" ]; then
-          echo "$RUN_ID" > run_id.txt
-          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-        else
-          echo "❌ Failed to get RUN_ID"
-          exit 1
-        fi
+        echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+        echo "$RUN_ID" > run_id.txt
 
-    # 5. Verify Model - SESUAI dengan struktur dari modelling.py Anda
+    # 7. Verify model
     - name: Verify Model Artifacts
       run: |
         cd MLProject
         
-        echo "🔍 Verifying model artifacts..."
-        
         if [ -f "run_id.txt" ]; then
           RUN_ID=$(cat run_id.txt)
-          echo "Run ID to check: $RUN_ID"
+          echo "🔍 Verifying model for Run ID: $RUN_ID"
           
-          # Model dari script Anda harusnya di 3 lokasi:
-          # 1. mlruns/0/$RUN_ID/artifacts/model/ (dari mlflow.sklearn.log_model)
-          # 2. best_model.pkl (dari pickle.dump)
-          # 3. best_model.joblib (dari joblib.dump)
+          # Dari struktur Anda, model ada di:
+          # mlruns/222819206179196404/854758fb1b84453ea1d3281434c0c67c/artifacts/model/
+          # DAN di mlruns/222819206179196404/models/m-2a081b3ab10140809d66b1c5dfa98cde/artifacts/
           
-          echo "Checking standard MLflow location..."
-          if [ -d "mlruns/0/$RUN_ID/artifacts/model" ]; then
-            echo "✅ MLflow model found!"
-            ls -la mlruns/0/$RUN_ID/artifacts/model/
+          echo "Looking for model in mlruns..."
+          
+          # Cari folder run yang punya artifacts/model
+          MODEL_RUN=$(find mlruns -type d -name "artifacts" | xargs -I {} dirname {} | head -1)
+          if [ -d "$MODEL_RUN/artifacts/model" ]; then
+            echo "✅ Model found at: $MODEL_RUN/artifacts/model"
+            ls -la "$MODEL_RUN/artifacts/model/"
           else
-            echo "⚠️ Checking for pickle/joblib files..."
-            
-            # Cari file yang dibuat script Anda
-            if [ -f "best_model.pkl" ]; then
-              echo "✅ best_model.pkl found (from pickle.dump)"
-            fi
-            
-            if [ -f "best_model.joblib" ]; then
-              echo "✅ best_model.joblib found (from joblib.dump)"
-            fi
-            
-            # Cari model di registered model (karena Anda pakai registered_model_name)
-            echo "Checking registered models..."
-            find mlruns -type d -name "m-*" 2>/dev/null | head -3
+            echo "⚠️ Checking registered models..."
+            find mlruns -type d -name "m-*" | head -3
           fi
-          
-          # Tampilkan struktur lengkap untuk debugging
-          echo "📁 Full mlruns structure:"
-          find mlruns -type f -name "*.pkl" -o -name "*.joblib" -o -name "MLmodel" -o -name "conda.yaml" | head -15
-          
         else
           echo "❌ run_id.txt not found"
           exit 1
         fi
 
-    # 6. Build Docker - SESUAI dengan model URI yang benar
-    - name: Build Docker image with MLflow
+    # 8. Build Docker
+    - name: Build Docker image
       run: |
         cd MLProject
         
         if [ -f "run_id.txt" ]; then
           RUN_ID=$(cat run_id.txt)
-          echo "🐳 Building Docker image for Run ID: $RUN_ID"
-          
-          # Coba beberapa URI yang mungkin:
-          # 1. runs:/$RUN_ID/model (standard)
-          # 2. runs:/$RUN_ID/artifacts/model
-          # 3. file path jika tidak ketemu
-          
-          echo "Trying URI: runs:/$RUN_ID/model"
+          echo "🐳 Building Docker for Run ID: $RUN_ID"
           
           mlflow models build-docker \
             -m "runs:/$RUN_ID/model" \
-            -n "mlflow-diabetes-model" \
-            --enable-mlserver
+            -n "mlflow-diabetes-model"
             
-          echo "✅ Docker image built successfully"
+          echo "✅ Docker image built"
         else
           echo "❌ run_id.txt not found"
           exit 1
         fi
 
-    # 7. Install Docker untuk push
+    # 9. Install Docker
     - name: Install Docker
       run: |
         sudo apt-get update
         sudo apt-get install -y docker.io
-        sudo systemctl enable docker
         sudo systemctl start docker
 
-    # 8. Login to Docker Hub
+    # 10. Login Docker Hub
     - name: Login to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_TOKEN }}
 
-    # 9. Tag and Push Docker image
-    - name: Tag and Push Docker image to Docker Hub
+    # 11. Tag & Push
+    - name: Tag and Push Docker image
       run: |
-        echo "🏷️ Tagging Docker image..."
-        
-        # Tag dengan username Anda
         docker tag "mlflow-diabetes-model" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
         docker tag "mlflow-diabetes-model" "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
-        
-        echo "📤 Pushing to Docker Hub..."
         docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:latest"
         docker push "${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes:${{ github.sha }}"
         
-        echo "🎉 Successfully pushed to Docker Hub!"
-        echo "Image: ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes"
-        echo "Tags: latest, ${{ github.sha }}"
+        echo "🎉 Pushed to Docker Hub: ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes"
 
-    # 10. Upload artifacts (optional)
+    # 12. Upload artifacts
     - name: Upload MLflow artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -183,10 +153,8 @@ jobs:
         path: MLProject/mlruns
         retention-days: 30
 
-    # 11. Complete
+    # 13. Complete
     - name: Complete pipeline
       run: |
-        echo "✅ MLflow CI Pipeline COMPLETED!"
-        echo "🎯 Model trained using YOUR modelling.py script"
-        echo "🐳 Docker image: ${{ secrets.DOCKER_USERNAME }}/mlflow-diabetes"
-        echo "📊 Check Docker Hub for your deployed model"
+        echo "✅ MLflow CI/CD Pipeline COMPLETED!"
+        echo "📁 Structure was: Workflow → MLProject → run"
